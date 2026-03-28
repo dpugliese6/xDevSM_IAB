@@ -32,6 +32,7 @@ class XappKpmFrame(BaseXDevSMWrapper):
         self.http_port = http_port
 
         self.subscription_id = {}
+        self.subscription_context = {}  # sub_id -> dict of subscription params (sst, sd, gnb, ...)
         self.kpm_func_def_wrapper = KpmFunctionDef.KpmFuncDefArrWrapper(hex="")
 
         # callbacks
@@ -127,7 +128,8 @@ class XappKpmFrame(BaseXDevSMWrapper):
             ))
             decoded_ind_msg.print_meas_info(xapp.logger)
         else:
-            self.__ind_msg_callback(decoded_ind_hdr, decoded_ind_msg, summary['meid'])
+            sub_id = summary.get(rmr.RMR_MS_SUB_ID, None)
+            self.__ind_msg_callback(decoded_ind_hdr, decoded_ind_msg, summary['meid'], sub_id)
 
     # External APIs
     def register_ind_msg_callback(self, handler):
@@ -218,7 +220,16 @@ class XappKpmFrame(BaseXDevSMWrapper):
         response_json = json.loads(data)
         self.logger.info("[XappKpmFrame] reason:{}".format(reason))
         self.logger.info("[XappKpmFrame] subscription reponse {}".format(response_json))
-        self.subscription_id[gnb.inventory_name] = response_json["SubscriptionId"]
+        sub_id = response_json["SubscriptionId"]
+        self.subscription_id[gnb.inventory_name] = sub_id
+        ctx = {"gnb": gnb.inventory_name, "sst": sst, "sd": sd}
+        self.subscription_context[sub_id] = ctx
+        # Also store by integer instance IDs (used by RMR sub_id)
+        for inst in (response_json.get("SubscriptionInstances") or []):
+            if "E2EventInstanceId" in inst:
+                self.subscription_context[inst["E2EventInstanceId"]] = ctx
+            if "XappEventInstanceId" in inst:
+                self.subscription_context[inst["XappEventInstanceId"]] = ctx
         self.logger.info("[XappKpmFrame] Got the subscription reponse, my subscription id for gnb {} is: {}".format(gnb.inventory_name, self.subscription_id))
 
         return status
@@ -236,7 +247,18 @@ class XappKpmFrame(BaseXDevSMWrapper):
         else:
             self.logger.info("called response handler subscription successfull! Response: {}".format(response_json))
             response['payload'] = json.dumps(response_json)
-       
+            # Map integer instance IDs to subscription context (for RMR sub_id lookup)
+            str_sub_id = response_json.get("SubscriptionId")
+            ctx = self.subscription_context.get(str_sub_id)
+            if ctx:
+                for inst in (response_json.get("SubscriptionInstances") or []):
+                    if "E2EventInstanceId" in inst:
+                        self.subscription_context[inst["E2EventInstanceId"]] = ctx
+                    if "XappEventInstanceId" in inst:
+                        self.subscription_context[inst["XappEventInstanceId"]] = ctx
+                self.logger.info("[XappKpmFrame] Mapped instance IDs for sub {} to context sst={} sd={}".format(
+                    str_sub_id, ctx["sst"], ctx["sd"]))
+
         return response
     
     def get_ue_id(self, ue_meas_report: KpmIndicationMsg.ue_id_e2sm_t) -> int:
@@ -267,7 +289,7 @@ class XappKpmFrame(BaseXDevSMWrapper):
         else:
             for key in self.subscription_id.keys():
                 self.logger.info("[XappKpmFrame] Unsubscribing from gnb: {}, subid: {}, DELETE {}".format(key, self.subscription_id[key], self.uri_subscriptions))
-                # self.subscriber.Unsubscribe(self.subscription_id[key])
+                self.subscriber.Unsubscribe(self.subscription_id[key])
         self._xapp_handler.terminate(signum, frame)
 
 

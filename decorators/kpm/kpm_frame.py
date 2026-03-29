@@ -154,18 +154,13 @@ class XappKpmFrame(BaseXDevSMWrapper):
         self.__sub_failed_callback = handler
     
     def remove_sub_id(self, sub_id: str):
-        to_remove = None
         for key in self.subscription_id.keys():
-            if self.subscription_id[key] == sub_id:
-                to_remove = key
-                break
-        
-        if to_remove is None:
-            #xapp.logger.error("[XappKpmFrame] subscription id not found")
-            print("[XappKpmFrame] subscription id not found")
-            return
-        else:
-            del self.subscription_id[to_remove]
+            if sub_id in self.subscription_id[key]:
+                self.subscription_id[key].remove(sub_id)
+                if not self.subscription_id[key]:
+                    del self.subscription_id[key]
+                return
+        print("[XappKpmFrame] subscription id not found")
     
 
     def subscribe(self, gnb, ev_trigger: Tuple[int, float], func_def: dict, action_type=Values.ACTION_TYPE, ran_period_ms=1000, sst=1, sd=0):
@@ -221,7 +216,7 @@ class XappKpmFrame(BaseXDevSMWrapper):
         self.logger.info("[XappKpmFrame] reason:{}".format(reason))
         self.logger.info("[XappKpmFrame] subscription reponse {}".format(response_json))
         sub_id = response_json["SubscriptionId"]
-        self.subscription_id[gnb.inventory_name] = sub_id
+        self.subscription_id.setdefault(gnb.inventory_name, []).append(sub_id)
         ctx = {"gnb": gnb.inventory_name, "sst": sst, "sd": sd}
         self.subscription_context[sub_id] = ctx
         # Also store by integer instance IDs (used by RMR sub_id)
@@ -230,7 +225,7 @@ class XappKpmFrame(BaseXDevSMWrapper):
                 self.subscription_context[inst["E2EventInstanceId"]] = ctx
             if "XappEventInstanceId" in inst:
                 self.subscription_context[inst["XappEventInstanceId"]] = ctx
-        self.logger.info("[XappKpmFrame] Got the subscription reponse, my subscription id for gnb {} is: {}".format(gnb.inventory_name, self.subscription_id))
+        self.logger.info("[XappKpmFrame] Got subscription for gnb {} sst={} sd={}, sub_id: {}".format(gnb.inventory_name, sst, sd, sub_id))
 
         return status
 
@@ -288,8 +283,16 @@ class XappKpmFrame(BaseXDevSMWrapper):
             self.logger.info("[XappKpmFrame] Not subscribed - terminating...")
         else:
             for key in self.subscription_id.keys():
-                self.logger.info("[XappKpmFrame] Unsubscribing from gnb: {}, subid: {}, DELETE {}".format(key, self.subscription_id[key], self.uri_subscriptions))
-                self.subscriber.Unsubscribe(self.subscription_id[key])
+                for sub_id in self.subscription_id[key]:
+                    self.logger.info("[XappKpmFrame] Unsubscribing from gnb: {}, subid: {}".format(key, sub_id))
+                    try:
+                        data, reason, status = self.subscriber.Unsubscribe(sub_id)
+                        if status == 204:
+                            self.logger.info("[XappKpmFrame] Unsubscribed gnb: {} subid: {} (status: 204)".format(key, sub_id))
+                        else:
+                            self.logger.error("[XappKpmFrame] Failed to unsubscribe gnb: {} subid: {} - status: {}, reason: {}".format(key, sub_id, status, reason))
+                    except Exception as e:
+                        self.logger.error("[XappKpmFrame] Exception during unsubscribe for gnb: {} subid: {} - {}".format(key, sub_id, e))
         self._xapp_handler.terminate(signum, frame)
 
 
@@ -301,18 +304,15 @@ class XappKpmFrame(BaseXDevSMWrapper):
 
         Returns:
         ----------
-        subscription id for that gnb
+        list of subscription ids for that gnb
         """
-        return self.subscription_id[inventory_name]
+        return self.subscription_id.get(inventory_name, [])
 
     def _remove_sub_id(self, sub_id: str):
-        to_remove = None
         for key in self.subscription_id.keys():
-            if self.subscription_id[key] == sub_id:
-                to_remove = key
-                break
-        
-        if to_remove is None:
-            self.logger.error("subscription id not found")
-        else:
-            del self.subscription_id[to_remove]
+            if sub_id in self.subscription_id[key]:
+                self.subscription_id[key].remove(sub_id)
+                if not self.subscription_id[key]:
+                    del self.subscription_id[key]
+                return
+        self.logger.error("[XappKpmFrame] subscription id {} not found".format(sub_id))

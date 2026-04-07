@@ -293,7 +293,6 @@ class XappKpmFrame(BaseXDevSMWrapper):
                             self.logger.error("[XappKpmFrame] Failed to unsubscribe gnb: {} subid: {} - status: {}, reason: {}".format(key, sub_id, status, reason))
                     except Exception as e:
                         self.logger.error("[XappKpmFrame] Exception during unsubscribe for gnb: {} subid: {} - {}".format(key, sub_id, e))
-                    time.sleep(0.1)    
         self._xapp_handler.terminate(signum, frame)
 
 
